@@ -16,8 +16,6 @@ contract MetaWalletV2 {
     event Deposited(address indexed user, uint256 amount);
     event Withdrawn(address indexed user, uint256 amount);
     event MetaTransactionExecuted(address indexed user, address target, bytes data);
-    event RelayerAdded(address indexed relayer);
-    event RelayerRemoved(address indexed relayer);
 
     modifier onlyOwner() {
         require(msg.sender == owner, "Only owner");
@@ -52,7 +50,7 @@ contract MetaWalletV2 {
         bytes calldata data,
         uint256 nonce,
         bytes calldata signature
-    ) external {
+    ) public {
         require(relayerWhitelist[msg.sender], "Not authorized relayer");
         require(nonce == nonces[user], "Invalid nonce");
 
@@ -97,44 +95,13 @@ contract MetaWalletV2 {
             signature
         );
     }
-    
-    function metaSendETH(
-        address user,
-        address to,
-        uint256 amount,
-        uint256 nonce,
-        bytes calldata signature
-    ) external {
-        require(relayerWhitelist[msg.sender], "Only relayer");
-        require(nonce == nonces[user], "Invalid nonce");
-        require(balances[user] >= amount, "Insufficient balance");
-
-        bytes32 hash = getMessageHash(user, to, abi.encodePacked(amount), nonce);
-        require(!usedHashes[hash], "Replay");
-        require(recoverSigner(hash, signature) == user, "Invalid signature");
-
-        usedHashes[hash] = true;
-        nonces[user]++;
-        balances[user] -= amount;
-
-        payable(to).transfer(amount);
-        emit MetaTransactionExecuted(user, to, abi.encodePacked(amount));
-    }
 
     // ========== Utilities ==========
-    function getMessageHash(
-        address user,
-        address target,
-        bytes memory data,
-        uint256 nonce
-    ) public pure returns (bytes32) {
+    function getMessageHash(address user, address target, bytes memory data, uint256 nonce) public pure returns (bytes32) {
         return keccak256(abi.encodePacked(user, target, data, nonce));
     }
 
-    function recoverSigner(
-        bytes32 messageHash,
-        bytes memory signature
-    ) public pure returns (address) {
+    function recoverSigner(bytes32 messageHash, bytes memory signature) public pure returns (address) {
         bytes32 ethHash = prefixed(messageHash);
         (uint8 v, bytes32 r, bytes32 s) = splitSignature(signature);
         return ecrecover(ethHash, v, r, s);
@@ -144,40 +111,23 @@ contract MetaWalletV2 {
         return keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash));
     }
 
-    function splitSignature(
-        bytes memory sig
-    ) internal pure returns (uint8, bytes32, bytes32) {
-        require(sig.length == 65, "Bad signature length");
-        
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-        
+    function splitSignature(bytes memory sig) internal pure returns (uint8, bytes32, bytes32) {
+        require(sig.length == 65, "Bad sig");
+        bytes32 r; bytes32 s; uint8 v;
         assembly {
             r := mload(add(sig, 32))
             s := mload(add(sig, 64))
             v := byte(0, mload(add(sig, 96)))
         }
-        
         return (v, r, s);
     }
 
     // ========== Relayer Controls ==========
     function addRelayer(address relayer) external onlyOwner {
-        require(relayer != address(0), "Invalid address");
         relayerWhitelist[relayer] = true;
-        emit RelayerAdded(relayer);
     }
 
     function removeRelayer(address relayer) external onlyOwner {
-        require(relayerWhitelist[relayer], "Not a relayer");
         relayerWhitelist[relayer] = false;
-        emit RelayerRemoved(relayer);
-    }
-
-    // ========== Owner Controls ==========
-    function transferOwnership(address newOwner) external onlyOwner {
-        require(newOwner != address(0), "Invalid address");
-        owner = newOwner;
     }
 }
