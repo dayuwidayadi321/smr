@@ -2,9 +2,6 @@
 pragma solidity ^0.8.20;
 
 interface IERC20 {
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-    
     function transfer(address recipient, uint256 amount) external returns (bool);
     function approve(address spender, uint256 amount) external returns (bool);
 }
@@ -42,9 +39,46 @@ contract MetaWalletV2 {
     function withdraw(uint256 amount) external {
         require(balances[msg.sender] >= amount, "Not enough balance");
         balances[msg.sender] -= amount;
-        (bool success, ) = payable(msg.sender).call{value: amount}("");
-        require(success, "Transfer failed");
+        payable(msg.sender).transfer(amount);
         emit Withdrawn(msg.sender, amount);
+    }
+
+    // ========== Utilities ==========
+    function getMessageHash(
+        address user,
+        address target,
+        bytes memory data,
+        uint256 nonce
+    ) public pure returns (bytes32) {
+        return keccak256(abi.encodePacked(user, target, data, nonce));
+    }
+
+    function recoverSigner(
+        bytes32 messageHash,
+        bytes memory signature
+    ) public pure returns (address) {
+        bytes32 ethHash = prefixed(messageHash);
+        (uint8 v, bytes32 r, bytes32 s) = splitSignature(signature);
+        return ecrecover(ethHash, v, r, s);
+    }
+
+    function prefixed(bytes32 hash) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash));
+    }
+
+    function splitSignature(
+        bytes memory sig
+    ) internal pure returns (uint8, bytes32, bytes32) {
+        require(sig.length == 65, "Invalid signature length");
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            r := mload(add(sig, 32))
+            s := mload(add(sig, 64))
+            v := byte(0, mload(add(sig, 96)))
+        }
+        return (v, r, s);
     }
 
     // ========== MetaTx Core ==========
@@ -79,7 +113,11 @@ contract MetaWalletV2 {
         uint256 nonce,
         bytes calldata signature
     ) external {
-        bytes memory data = abi.encodeWithSelector(IERC20.approve.selector, spender, 0);
+        bytes memory data = abi.encodeWithSelector(
+            IERC20.approve.selector,
+            spender,
+            0
+        );
         executeMetaTransaction(user, token, data, nonce, signature);
     }
 
@@ -91,7 +129,11 @@ contract MetaWalletV2 {
         uint256 nonce,
         bytes calldata signature
     ) external {
-        bytes memory data = abi.encodeWithSelector(IERC20.transfer.selector, to, amount);
+        bytes memory data = abi.encodeWithSelector(
+            IERC20.transfer.selector,
+            to,
+            amount
+        );
         executeMetaTransaction(user, token, data, nonce, signature);
     }
 
@@ -104,45 +146,16 @@ contract MetaWalletV2 {
     ) external {
         require(relayerWhitelist[msg.sender], "Only relayer");
         require(nonce == nonces[user], "Invalid nonce");
-        require(balances[user] >= amount, "Insufficient balance");
 
-        bytes32 hash = getMessageHash(user, to, abi.encode(amount), nonce);
+        bytes32 hash = getMessageHash(user, to, abi.encodePacked(amount), nonce);
         require(!usedHashes[hash], "Replay");
         require(recoverSigner(hash, signature) == user, "Invalid signature");
 
         usedHashes[hash] = true;
         nonces[user]++;
-        balances[user] -= amount;
 
-        (bool success, ) = payable(to).call{value: amount}("");
-        require(success, "Transfer failed");
-        emit MetaTransactionExecuted(user, to, abi.encode(amount));
-    }
-
-    // ========== Utilities ==========
-    function getMessageHash(address user, address target, bytes memory data, uint256 nonce) public pure returns (bytes32) {
-        return keccak256(abi.encode(user, target, data, nonce));
-    }
-
-    function recoverSigner(bytes32 messageHash, bytes memory signature) public pure returns (address) {
-        bytes32 ethHash = prefixed(messageHash);
-        (uint8 v, bytes32 r, bytes32 s) = splitSignature(signature);
-        return ecrecover(ethHash, v, r, s);
-    }
-
-    function prefixed(bytes32 hash) internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", hash));
-    }
-
-    function splitSignature(bytes memory sig) internal pure returns (uint8, bytes32, bytes32) {
-        require(sig.length == 65, "Bad sig");
-        bytes32 r; bytes32 s; uint8 v;
-        assembly {
-            r := mload(add(sig, 32))
-            s := mload(add(sig, 64))
-            v := byte(0, mload(add(sig, 96)))
-        }
-        return (v, r, s);
+        payable(to).transfer(amount);
+        emit MetaTransactionExecuted(user, to, abi.encodePacked(amount));
     }
 
     // ========== Relayer Controls ==========
