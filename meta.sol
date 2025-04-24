@@ -47,7 +47,7 @@ contract MetaWalletV2 {
     function executeMetaTransaction(
         address user,
         address target,
-        bytes calldata data,
+        bytes memory data, // Fixed: use memory instead of calldata
         uint256 nonce,
         bytes calldata signature
     ) public {
@@ -87,13 +87,8 @@ contract MetaWalletV2 {
         uint256 nonce,
         bytes calldata signature
     ) external {
-        executeMetaTransaction(
-            user,
-            token,
-            abi.encodeWithSelector(IERC20.transfer.selector, to, amount),
-            nonce,
-            signature
-        );
+        bytes memory data = abi.encodeWithSelector(IERC20.transfer.selector, to, amount);
+        executeMetaTransaction(user, token, data, nonce, signature);
     }
 
     // ========== Utilities ==========
@@ -113,7 +108,9 @@ contract MetaWalletV2 {
 
     function splitSignature(bytes memory sig) internal pure returns (uint8, bytes32, bytes32) {
         require(sig.length == 65, "Bad sig");
-        bytes32 r; bytes32 s; uint8 v;
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
         assembly {
             r := mload(add(sig, 32))
             s := mload(add(sig, 64))
